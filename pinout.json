@@ -1,0 +1,111 @@
+{
+  "board": {
+    "name": "Waveshare ESP32-S3 Audio Board",
+    "mcu": "ESP32-S3",
+    "flash": "16MB",
+    "psram": "8MB (Octal)",
+    "framework": "ESP-IDF"
+  },
+  "i2c": {
+    "bus_id": "standard",
+    "scl": "GPIO10",
+    "sda": "GPIO11",
+    "frequency": "50kHz",
+    "devices": [
+      {
+        "name": "TCA9555 I/O Expander",
+        "address": 32
+      },
+      {
+        "name": "ES8311 Audio DAC",
+        "address": 24
+      },
+      {
+        "name": "ES7210 Audio ADC",
+        "address": 64
+      },
+      {
+        "name": "PCF85063 RTC",
+        "address": 81
+      }
+    ]
+  },
+  "i2s": {
+    "bus_id": "i2s_audio_bus",
+    "mclk": "GPIO12",
+    "bclk": "GPIO13",
+    "lrclk": "GPIO14",
+    "din": "GPIO15",
+    "dout": "GPIO16"
+  },
+  "audio": {
+    "adc": {
+      "chip": "ES7210",
+      "type": "Quad-channel audio ADC",
+      "bits_per_sample": 16,
+      "sample_rate": 16000
+    },
+    "dac": {
+      "chip": "ES8311",
+      "type": "Low-power mono audio codec",
+      "bits_per_sample": 16,
+      "sample_rate": 16000
+    }
+  },
+  "speaker": {
+    "amplifier_enable": {
+      "io_expander": "TCA9555",
+      "pin": 8,
+      "active_high": true
+    }
+  },
+  "led_ring": {
+    "type": "WS2812",
+    "gpio": "GPIO38",
+    "num_leds": 7,
+    "color_order": "RGB"
+  },
+  "buttons": {
+    "key1_vol_down": {
+      "io_expander": "TCA9555",
+      "pin": 9,
+      "active_low": true
+    },
+    "key2_assist": {
+      "io_expander": "TCA9555",
+      "pin": 10,
+      "active_low": true
+    },
+    "key3_vol_up": {
+      "io_expander": "TCA9555",
+      "pin": 11,
+      "active_low": true
+    }
+  },
+  "rtc": {
+    "chip": "PCF85063",
+    "i2c_address": 81
+  },
+  "io_expander": {
+    "chip": "TCA9555",
+    "i2c_address": 32,
+    "pins": {
+      "EXIO00": 0,
+      "EXIO01": 1,
+      "EXIO02": 2,
+      "EXIO03": 3,
+      "EXIO04": 4,
+      "EXIO05": 5,
+      "EXIO06": 6,
+      "EXIO07": 7,
+      "EXIO08": 8,
+      "EXIO09": 9,
+      "EXIO10": 10,
+      "EXIO11": 11,
+      "EXIO12": 12,
+      "EXIO13": 13,
+      "EXIO14": 14,
+      "EXIO15": 15
+    }
+  }
+}

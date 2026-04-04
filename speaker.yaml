@@ -1,0 +1,358 @@
+esphome:
+  name: speaker
+  friendly_name: Speaker
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+  variant: esp32s3
+  flash_size: 16MB
+
+psram:
+  mode: octal        # S3 8MB PSRAM is typically octal
+  speed: 80MHz       # safe default; bump only if you know your module supports it
+  # enable_ecc: false # optional; enabling reduces usable PSRAM and speed slightly
+  
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Speaker Fallback Hotspot"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+web_server:
+  port: 80
+
+i2c:
+  id: standard
+  scl: GPIO10
+  sda: GPIO11
+
+time:
+  - platform: pcf85063
+    id: pcf85063_time
+
+i2s_audio:
+  - id: i2s_audio_bus
+    i2s_mclk_pin: GPIO12
+    i2s_bclk_pin: GPIO13
+    i2s_lrclk_pin: GPIO14
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_audio_bus
+    i2s_din_pin: GPIO15
+    adc_type: external
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: standard
+
+speaker:
+  - platform: i2s_audio
+    id: spkr
+    i2s_audio_id: i2s_audio_bus
+    i2s_dout_pin: GPIO16
+    dac_type: external
+    audio_dac: es8311_dac
+    buffer_duration: 
+      seconds: 20
+
+tca9555:
+  - id: exio
+    address: 0x20     # default with A0/A1 low
+
+switch:
+  - platform: gpio
+    id: pa_enable
+    name: "Speaker Amplifier Enable"
+    pin:
+      tca9555: exio
+      number: 8    # EXIO09
+      mode: OUTPUT
+    restore_mode: ALWAYS_ON
+
+media_player:
+  - platform: speaker
+    id: esp32_audio_player
+    name: "ESP32 Audio Player"
+    internal: False
+    announcement_pipeline:
+      speaker: spkr
+
+binary_sensor:
+  - platform: gpio
+    name: "Key1 - Vol Down"
+    id: key1
+    pin:
+      tca9555: exio
+      number: 9         # EXIO10
+      mode: INPUT
+      inverted: true
+    on_press:
+      - media_player.volume_down: esp32_audio_player
+
+  - platform: gpio
+    name: "Key2 - Assist"
+    id: key2
+    pin:
+      tca9555: exio
+      number: 10        # EXIO11
+      mode: INPUT
+      inverted: true
+    on_press:
+      - logger.log: "Starting Assistant"
+      - voice_assistant.start:
+          silence_detection: false
+    on_release:
+      - logger.log: "Stopping assistant"
+      - voice_assistant.stop:
+        
+
+  - platform: gpio
+    name: "Key3 - Vol Up"
+    id: key3
+    pin:
+      tca9555: exio
+      number: 11        # EXIO12
+      mode: INPUT
+      inverted: true
+    on_press:
+      - media_player.volume_up: esp32_audio_player
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: rgb_ring
+    name: "ESP32 RGB Ring"
+    pin: GPIO38
+    num_leds: 7
+    chipset: ws2812
+    rgb_order: RGB
+    effects:
+      # Built-ins plus the ones we reference by name
+      - addressable_rainbow:
+          name: Rainbow
+      - addressable_color_wipe:
+          name: Wipe
+          add_led_interval: 40ms
+          reverse: false
+      - addressable_scan:
+          name: Scanner
+          move_interval: 60ms
+      - addressable_twinkle:
+          name: Twinkle
+          twinkle_probability: 5%
+          progress_interval: 60ms
+
+# ---------- LED choreography scripts ----------
+script:
+  # Default idle: LEDs off
+  - id: leds_idle
+    then:
+      - light.turn_off: rgb_ring
+
+  # Connected heartbeat: brief low white blink
+  - id: leds_connected
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 10%
+          red: 100%
+          green: 100%
+          blue: 100%
+      - delay: 400ms
+      - script.execute: leds_idle
+
+  # Disconnected: two slow red blinks
+  - id: leds_disconnected
+    then:
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on:
+                id: rgb_ring
+                brightness: 20%
+                red: 100%
+                green: 0%
+                blue: 0%
+            - delay: 300ms
+            - light.turn_off: rgb_ring
+            - delay: 300ms
+
+  # Wake word detected: quick cyan wipe
+  - id: leds_wake
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 40%
+          red: 0%
+          green: 80%
+          blue: 100%
+          effect: Wipe
+      - delay: 500ms
+
+  # Listening: green scanner
+  - id: leds_listening
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 35%
+          red: 0%
+          green: 100%
+          blue: 0%
+          effect: Scanner
+
+  # STT VAD active window start: amber twinkle while capturing
+  - id: leds_vad_active
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 30%
+          red: 100%
+          green: 60%
+          blue: 0%
+          effect: Twinkle
+
+  # STT done: brief teal solid to mark transcript ready
+  - id: leds_stt_done
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 30%
+          red: 0%
+          green: 60%
+          blue: 60%
+      - delay: 300ms
+
+  # Intent/thinking: fast yellow scanner
+  - id: leds_thinking
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 35%
+          red: 100%
+          green: 90%
+          blue: 0%
+          effect: Scanner
+
+  # TTS starting: purple twinkle
+  - id: leds_tts_start
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 35%
+          red: 80%
+          green: 0%
+          blue: 100%
+          effect: Twinkle
+
+  # Speaking/streaming: magenta wipe looping
+  - id: leds_speaking
+    then:
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 35%
+          red: 100%
+          green: 0%
+          blue: 60%
+          effect: Wipe
+
+  # Error: three sharp red flashes
+  - id: leds_error
+    then:
+      - repeat:
+          count: 3
+          then:
+            - light.turn_on:
+                id: rgb_ring
+                brightness: 60%
+                red: 100%
+                green: 0%
+                blue: 0%
+            - delay: 150ms
+            - light.turn_off: rgb_ring
+            - delay: 150ms
+      - script.execute: leds_idle
+
+micro_wake_word:
+  id: mww
+  microphone: mic
+  vad:
+    model: github://esphome/micro-wake-word-models/models/v2/vad.json
+  models:
+    - model: okay_nabu
+
+voice_assistant:
+  microphone: mic
+  speaker: spkr
+
+  micro_wake_word: mww
+  use_wake_word: true
+
+
+
+  on_client_connected:
+    - script.execute: leds_connected
+
+  on_client_disconnected:
+    - script.execute: leds_disconnected
+
+  on_start:
+    - script.execute: leds_wake
+
+  on_wake_word_detected:
+    - script.execute: leds_wake
+
+  on_listening:
+    - script.execute: leds_listening
+
+  on_stt_vad_start:
+    - script.execute: leds_vad_active
+
+  on_stt_vad_end:
+    - script.execute: leds_listening
+
+  on_stt_end:
+    - script.execute: leds_stt_done
+
+  on_intent_start:
+    - script.execute: leds_thinking
+
+  on_tts_start:
+    - script.execute: leds_tts_start
+
+  on_tts_stream_start:
+    - script.execute: leds_speaking
+
+  on_tts_stream_end:
+    - script.execute: leds_idle
+
+  on_end:
+    - script.execute: leds_idle
+
+  on_error:
+    - script.execute: leds_error
