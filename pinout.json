@@ -1,21 +1,26 @@
 {
   "board": {
     "name": "Waveshare ESP32-S3 Audio Board",
-    "mcu": "ESP32-S3",
+    "mcu": "ESP32-S3R8",
+    "variant": "esp32s3",
+    "board_id": "esp32-s3-devkitc-1",
     "flash": "16MB",
-    "psram": "8MB (Octal)",
+    "flash_mode": "QIO",
+    "flash_speed": "80MHz",
+    "psram": "8MB",
+    "psram_mode": "octal",
+    "psram_speed": "80MHz",
+    "sram": "512KB",
+    "rom": "384KB",
+    "wifi": "2.4GHz 802.11 b/g/n",
+    "bluetooth": "5 (LE)",
     "framework": "ESP-IDF"
   },
   "i2c": {
-    "bus_id": "standard",
     "scl": "GPIO10",
     "sda": "GPIO11",
-    "frequency": "50kHz",
+    "frequency": "100kHz",
     "devices": [
-      {
-        "name": "TCA9555 I/O Expander",
-        "address": 32
-      },
       {
         "name": "ES8311 Audio DAC",
         "address": 24
@@ -25,13 +30,16 @@
         "address": 64
       },
       {
+        "name": "TCA9555 I/O Expander",
+        "address": 32
+      },
+      {
         "name": "PCF85063 RTC",
         "address": 81
       }
     ]
   },
   "i2s": {
-    "bus_id": "i2s_audio_bus",
     "mclk": "GPIO12",
     "bclk": "GPIO13",
     "lrclk": "GPIO14",
@@ -41,42 +49,51 @@
   "audio": {
     "adc": {
       "chip": "ES7210",
-      "type": "Quad-channel audio ADC",
+      "type": "4-channel audio ADC",
+      "i2c_address": 64,
       "bits_per_sample": 16,
       "sample_rate": 16000
     },
     "dac": {
       "chip": "ES8311",
       "type": "Low-power mono audio codec",
+      "i2c_address": 24,
       "bits_per_sample": 16,
       "sample_rate": 16000
-    }
-  },
-  "speaker": {
-    "amplifier_enable": {
-      "io_expander": "TCA9555",
-      "pin": 8,
-      "active_high": true
+    },
+    "amplifier": {
+      "chip": "NS4150B",
+      "type": "Mono Class-D speaker amplifier",
+      "enable_pin": {
+        "io_expander": "TCA9555",
+        "pin": 8,
+        "active_high": true
+      }
     }
   },
   "led_ring": {
-    "type": "WS2812",
+    "type": "WS2812B-0807",
     "gpio": "GPIO38",
     "num_leds": 7,
-    "color_order": "RGB"
+    "color_order": "GRB"
   },
   "buttons": {
-    "key1_vol_down": {
-      "io_expander": "TCA9555",
-      "pin": 9,
-      "active_low": true
+    "boot": {
+      "gpio": "GPIO0",
+      "active_low": true,
+      "note": "Standard ESP32 boot button"
     },
-    "key2_assist": {
+    "key1": {
       "io_expander": "TCA9555",
       "pin": 10,
       "active_low": true
     },
-    "key3_vol_up": {
+    "key2": {
+      "io_expander": "TCA9555",
+      "pin": 10,
+      "active_low": true
+    },
+    "key3": {
       "io_expander": "TCA9555",
       "pin": 11,
       "active_low": true
@@ -86,26 +103,115 @@
     "chip": "PCF85063",
     "i2c_address": 81
   },
-  "io_expander": {
-    "chip": "TCA9555",
-    "i2c_address": 32,
-    "pins": {
-      "EXIO00": 0,
-      "EXIO01": 1,
-      "EXIO02": 2,
-      "EXIO03": 3,
-      "EXIO04": 4,
-      "EXIO05": 5,
-      "EXIO06": 6,
-      "EXIO07": 7,
-      "EXIO08": 8,
-      "EXIO09": 9,
-      "EXIO10": 10,
-      "EXIO11": 11,
-      "EXIO12": 12,
-      "EXIO13": 13,
-      "EXIO14": 14,
-      "EXIO15": 15
+  "battery": {
+    "adc_pin": "GPIO8"
+  },
+  "usb": {
+    "type": "USB-C",
+    "d_minus": "GPIO19",
+    "d_plus": "GPIO20",
+    "note": "When EXIO7 is LOW, USB is unavailable"
+  },
+  "lcd": {
+    "cs": "GPIO3",
+    "sclk": "GPIO4",
+    "backlight": "GPIO5",
+    "sda0": "GPIO9",
+    "sda1": "GPIO8",
+    "sda2": "GPIO7",
+    "sda3": "GPIO6",
+    "reset": {
+      "io_expander": "TCA9555",
+      "pin": 0
+    },
+    "touch_reset": {
+      "io_expander": "TCA9555",
+      "pin": 1
+    },
+    "touch_interrupt": {
+      "io_expander": "TCA9555",
+      "pin": 2
+    },
+    "compatible_displays": [
+      "1.47\" JD9853",
+      "1.85\" ST77916 (QSPI)",
+      "2\" ST7789",
+      "2.8\" ST7789",
+      "3.5\" ST7796"
+    ]
+  },
+  "sd_card": {
+    "mode": "SDMMC 1-bit",
+    "clk": "GPIO40",
+    "cmd": "GPIO42",
+    "d0": "GPIO41",
+    "cs": {
+      "io_expander": "TCA9555",
+      "pin": 3
     }
+  },
+  "camera": {
+    "interface": "DVP",
+    "compatible": [
+      "OV2640",
+      "OV5640"
+    ],
+    "xclk": "GPIO43",
+    "pclk": "GPIO44",
+    "vsync": "GPIO21",
+    "href": "GPIO1",
+    "d0": "GPIO2",
+    "d1": "GPIO17",
+    "d2": "GPIO18",
+    "d3": "GPIO39",
+    "d4": "GPIO45",
+    "d5": "GPIO46",
+    "d6": "GPIO47",
+    "d7": "GPIO48",
+    "siod": "GPIO11",
+    "sioc": "GPIO10",
+    "power_down": {
+      "io_expander": "TCA9555",
+      "pin": 5
+    },
+    "camera_select": {
+      "io_expander": "TCA9555",
+      "pin": 6
+    },
+    "hardware_reset": {
+      "io_expander": "TCA9555",
+      "pin": 7
+    }
+  },
+  "io_expander": {
+    "chip": "TCA9555PWR",
+    "i2c_address": 32,
+    "port0": {
+      "pin0": "LCD Reset",
+      "pin1": "Touch Panel Reset",
+      "pin2": "Touch Panel Interrupt",
+      "pin3": "SD Card CS",
+      "pin4": "Reserved",
+      "pin5": "Camera Power Down (active low)",
+      "pin6": "Camera Select (HIGH=Tx/Rx, LOW=USB)",
+      "pin7": "Camera/USB GPIO mux control"
+    },
+    "port1": {
+      "pin8": "PA_CTRL - Speaker amplifier enable",
+      "pin9": "Key1 button (active low)",
+      "pin10": "Key2 button (active low)",
+      "pin11": "Key3 button (active low)",
+      "pin12": "Expansion header",
+      "pin13": "Expansion header",
+      "pin14": "Expansion header",
+      "pin15": "Expansion header"
+    }
+  },
+  "power": {
+    "input": "USB 5V Type-C",
+    "regulator": "MP1605GTF-Z 3.3V/2A DC-DC buck",
+    "battery_connector": "MX1.25 2-pin, 3.7V lithium",
+    "battery_switch": true,
+    "rtc_battery_header": true
   }
 }
