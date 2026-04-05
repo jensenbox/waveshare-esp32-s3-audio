@@ -354,8 +354,13 @@ voice_assistant:
     - script.execute: leds_idle
 
   on_end:
-    - micro_wake_word.start:
     - script.execute: leds_idle
+    - delay: 500ms
+    - wait_until:
+        not:
+          speaker.is_playing:
+    - delay: 250ms
+    - micro_wake_word.start:
 
   on_error:
     - micro_wake_word.start:
