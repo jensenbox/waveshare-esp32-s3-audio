@@ -2,6 +2,7 @@ esphome:
   name: speaker
   friendly_name: Speaker
 
+
 esp32:
   board: esp32-s3-devkitc-1
   framework:
@@ -127,10 +128,6 @@ binary_sensor:
     on_press:
       - logger.log: "Starting Assistant"
       - voice_assistant.start:
-          silence_detection: false
-    on_release:
-      - logger.log: "Stopping assistant"
-      - voice_assistant.stop:
         
 
   - platform: gpio
@@ -305,18 +302,23 @@ micro_wake_word:
     model: github://esphome/micro-wake-word-models/models/v2/vad.json
   models:
     - model: okay_nabu
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
 
 voice_assistant:
+  id: va
   microphone: mic
   speaker: spkr
-
   micro_wake_word: mww
-  use_wake_word: true
+  noise_suppression_level: 2
+  volume_multiplier: 2.0
 
 
 
   on_client_connected:
     - script.execute: leds_connected
+    - micro_wake_word.start:
 
   on_client_disconnected:
     - script.execute: leds_disconnected
@@ -352,7 +354,9 @@ voice_assistant:
     - script.execute: leds_idle
 
   on_end:
+    - micro_wake_word.start:
     - script.execute: leds_idle
 
   on_error:
+    - micro_wake_word.start:
     - script.execute: leds_error
