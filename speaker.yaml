@@ -364,16 +364,14 @@ voice_assistant:
     - script.execute: leds_speaking
 
   on_tts_stream_end:
-    - script.execute: leds_idle
-
-  on_end:
-    - delay: 2s
     - wait_until:
         not:
           speaker.is_playing:
     - delay: 500ms
     - lambda: id(va).set_use_wake_word(false);
     - micro_wake_word.start:
+
+  on_end:
     - script.execute: leds_idle
 
   on_error:
