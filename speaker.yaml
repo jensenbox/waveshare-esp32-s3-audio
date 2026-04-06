@@ -328,7 +328,7 @@ micro_wake_word:
   vad:
     model: github://esphome/micro-wake-word-models/models/v2/vad.json
   models:
-    - model: okay_nabu
+    - okay_nabu
   on_wake_word_detected:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
