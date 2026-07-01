@@ -1,3 +1,9 @@
+substitutions:
+  # Loud, short alarm clip served by Home Assistant from config/www/
+  # (reachable at http://<HA-IP>:8123/local/alarm.wav). The firmware loops
+  # it until stopped. Adjust the IP/port to your HA if different.
+  alarm_sound_url: "http://192.168.16.10:8123/local/alarm.wav"
+
 esphome:
   name: speaker
   friendly_name: Speaker
@@ -14,15 +20,30 @@ psram:
   mode: octal        # S3 8MB PSRAM is typically octal
   speed: 80MHz       # safe default; bump only if you know your module supports it
   # enable_ecc: false # optional; enabling reduces usable PSRAM and speed slightly
-  
+
 # Enable logging
 logger:
   level: DEBUG
+
+# Alarm ringing state (true while the wake-up alarm is sounding)
+globals:
+  - id: alarm_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 # Enable Home Assistant API
 api:
   encryption:
     key: !secret api_encryption_key
+  # HA-callable actions: esphome.speaker_alarm_start / esphome.speaker_alarm_stop
+  actions:
+    - action: alarm_start
+      then:
+        - script.execute: alarm_ring
+    - action: alarm_stop
+      then:
+        - script.execute: alarm_stop
 
 ota:
   - platform: esphome
@@ -60,7 +81,7 @@ i2s_audio:
 audio_adc:
   - platform: es7210
     id: es7210_adc
-    
+
 microphone:
   - platform: i2s_audio
     id: mic
@@ -80,7 +101,7 @@ speaker:
     i2s_dout_pin: GPIO16
     dac_type: external
     audio_dac: es8311_dac
-    buffer_duration: 
+    buffer_duration:
       seconds: 20
 
 tca9555:
@@ -125,7 +146,14 @@ binary_sensor:
       mode: INPUT
       inverted: true
     on_press:
-      - media_player.volume_down: esp32_audio_player
+      # While the alarm is ringing, any key silences it; otherwise normal role.
+      - if:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: alarm_stop
+          else:
+            - media_player.volume_down: esp32_audio_player
 
   - platform: gpio
     name: "Key2 - Assist"
@@ -136,9 +164,14 @@ binary_sensor:
       mode: INPUT
       inverted: true
     on_press:
-      - logger.log: "Starting Assistant"
-      - voice_assistant.start:
-        
+      - if:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: alarm_stop
+          else:
+            - logger.log: "Starting Assistant"
+            - voice_assistant.start:
 
   - platform: gpio
     name: "Key3 - Vol Up"
@@ -149,7 +182,26 @@ binary_sensor:
       mode: INPUT
       inverted: true
     on_press:
-      - media_player.volume_up: esp32_audio_player
+      - if:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: alarm_stop
+          else:
+            - media_player.volume_up: esp32_audio_player
+
+  # OPTIONAL dedicated STOP button on the expansion header (TCA9555 EXIO12).
+  # Uncomment after wiring a momentary button between EXIO12 and GND.
+  # - platform: gpio
+  #   name: "Alarm Stop Button"
+  #   id: stop_btn
+  #   pin:
+  #     tca9555: exio
+  #     number: 12
+  #     mode: INPUT
+  #     inverted: true
+  #   on_press:
+  #     - script.execute: alarm_stop
 
 light:
   - platform: esp32_rmt_led_strip
@@ -175,7 +227,10 @@ light:
           twinkle_probability: 5%
           progress_interval: 60ms
 
-# ---------- Wake word fallback restart ----------
+# ---------- LED choreography + alarm + wake-word fallback scripts ----------
+script:
+  # Wake word fallback restart (MOVED here from under light: — it is a script,
+  # not a light. This misplacement previously broke the whole config compile.)
   - id: restart_mww_fallback
     mode: restart
     then:
@@ -192,8 +247,43 @@ light:
             - lambda: id(va).set_use_wake_word(false);
             - micro_wake_word.start:
 
-# ---------- LED choreography scripts ----------
-script:
+  # ---- Wake-up alarm: loops the alarm sound + red LED scanner until stopped ----
+  - id: alarm_ring
+    mode: restart              # re-trigger restarts, never stacks
+    then:
+      - lambda: id(alarm_active) = true;
+      - micro_wake_word.stop:
+      - switch.turn_on: pa_enable
+      - while:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - light.turn_on:
+                id: rgb_ring
+                brightness: 90%
+                red: 100%
+                green: 25%
+                blue: 0%
+                effect: Scanner
+            - media_player.play_media:
+                id: esp32_audio_player
+                media_url: ${alarm_sound_url}
+                announcement: true
+            - wait_until:
+                not:
+                  media_player.is_announcing:
+            - delay: 400ms
+      - light.turn_off: rgb_ring
+
+  - id: alarm_stop
+    then:
+      - lambda: id(alarm_active) = false;
+      - media_player.stop:
+      - light.turn_off: rgb_ring
+      - delay: 500ms
+      - lambda: id(va).set_use_wake_word(false);
+      - micro_wake_word.start:
+
   # Default idle: LEDs off
   - id: leds_idle
     then:
