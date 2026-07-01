@@ -1,8 +1,8 @@
 substitutions:
-  # Loud, short alarm clip served by Home Assistant from config/www/
-  # (reachable at http://<HA-IP>:8123/local/alarm.wav). The firmware loops
-  # it until stopped. Adjust the IP/port to your HA if different.
-  alarm_sound_url: "http://192.168.16.10:8123/local/alarm.wav"
+  # Loud, short alarm clip served by Home Assistant from config/www/.
+  # MUST be MP3 or FLAC — ESPHome's speaker pipeline cannot read WAV
+  # (WAV gives "Media reader ... ESP_ERR_NOT_SUPPORTED" and plays silence).
+  alarm_sound_url: "http://192.168.16.10:8123/local/alarm.mp3"
 
 esphome:
   name: speaker
@@ -31,6 +31,12 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  # Remember the media player's volume so we can restore it after the alarm
+  # (the alarm forces full volume so it's actually loud enough to wake him).
+  - id: saved_volume
+    type: float
+    restore_value: false
+    initial_value: "0.6"
 
 # Enable Home Assistant API
 api:
@@ -117,6 +123,18 @@ switch:
       number: 8    # EXIO09
       mode: OUTPUT
     restore_mode: ALWAYS_ON
+
+  # "Alarm" toggle — appears on the device's own web page (http://<device-ip>/)
+  # and in Home Assistant. ON = ring the alarm, OFF = stop it. State follows
+  # the alarm (so pressing a key to stop also flips this back to OFF).
+  - platform: template
+    name: "Alarm"
+    id: alarm_switch
+    lambda: 'return id(alarm_active);'
+    turn_on_action:
+      - script.execute: alarm_ring
+    turn_off_action:
+      - script.execute: alarm_stop
 
 media_player:
   - platform: speaker
@@ -254,6 +272,11 @@ script:
       - lambda: id(alarm_active) = true;
       - micro_wake_word.stop:
       - switch.turn_on: pa_enable
+      # Save current volume, then force full volume so the alarm is loud.
+      - lambda: 'id(saved_volume) = id(esp32_audio_player)->volume;'
+      - media_player.volume_set:
+          id: esp32_audio_player
+          volume: 1.0
       - while:
           condition:
             lambda: 'return id(alarm_active);'
@@ -279,6 +302,10 @@ script:
     then:
       - lambda: id(alarm_active) = false;
       - media_player.stop:
+      # Restore the volume the alarm overrode.
+      - media_player.volume_set:
+          id: esp32_audio_player
+          volume: !lambda 'return id(saved_volume);'
       - light.turn_off: rgb_ring
       - delay: 500ms
       - lambda: id(va).set_use_wake_word(false);
