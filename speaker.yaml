@@ -1,9 +1,3 @@
-substitutions:
-  # Loud, short alarm clip served by Home Assistant from config/www/.
-  # MUST be MP3 or FLAC — ESPHome's speaker pipeline cannot read WAV
-  # (WAV gives "Media reader ... ESP_ERR_NOT_SUPPORTED" and plays silence).
-  alarm_sound_url: "http://192.168.16.10:8123/local/alarm.mp3"
-
 esphome:
   name: speaker
   friendly_name: Speaker
@@ -143,15 +137,28 @@ media_player:
     internal: False
     announcement_pipeline:
       speaker: spkr
+    # Alarm sound embedded in firmware flash (16 kHz mono FLAC, matching the
+    # device's configured sample rate). Self-contained: rings even if HA is down.
+    files:
+      - id: alarm_sound
+        file: alarm16.flac
     on_announcement:
       - micro_wake_word.stop:
       - delay: 500ms
       - wait_until:
           not:
             media_player.is_announcing:
-      - delay: 500ms
-      - lambda: id(va).set_use_wake_word(false);
-      - micro_wake_word.start:
+      # Don't restart the wake-word mic between alarm beeps: the alarm keeps
+      # announcing and the mic shares the I2S bus with the speaker, so a restart
+      # here just thrashes ("Driver failed to start"). alarm_stop re-enables the
+      # mic once the alarm ends.
+      - if:
+          condition:
+            lambda: 'return !id(alarm_active);'
+          then:
+            - delay: 500ms
+            - lambda: id(va).set_use_wake_word(false);
+            - micro_wake_word.start:
 
 
 binary_sensor:
@@ -277,25 +284,27 @@ script:
       - media_player.volume_set:
           id: esp32_audio_player
           volume: 1.0
+      # Red LED scanner runs continuously while the alarm is active.
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 90%
+          red: 100%
+          green: 25%
+          blue: 0%
+          effect: Scanner
+      # Loop the embedded alarm sound (from flash) until the alarm is stopped.
       - while:
           condition:
             lambda: 'return id(alarm_active);'
           then:
-            - light.turn_on:
-                id: rgb_ring
-                brightness: 90%
-                red: 100%
-                green: 25%
-                blue: 0%
-                effect: Scanner
-            - media_player.play_media:
+            - media_player.speaker.play_on_device_media_file:
                 id: esp32_audio_player
-                media_url: ${alarm_sound_url}
+                media_file: alarm_sound
                 announcement: true
             - wait_until:
                 not:
                   media_player.is_announcing:
-            - delay: 400ms
+            - delay: 250ms
       - light.turn_off: rgb_ring
 
   - id: alarm_stop
