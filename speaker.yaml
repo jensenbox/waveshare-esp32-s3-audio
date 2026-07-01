@@ -228,6 +228,22 @@ binary_sensor:
   #   on_press:
   #     - script.execute: alarm_stop
 
+# Volume slider — appears on the device web page (http://<device-ip>/) and in
+# Home Assistant. Reflects and sets the media player's volume (0-100%).
+number:
+  - platform: template
+    name: "Volume"
+    id: volume_slider
+    min_value: 0
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    lambda: 'return id(esp32_audio_player)->volume * 100.0;'
+    set_action:
+      - media_player.volume_set:
+          id: esp32_audio_player
+          volume: !lambda 'return x / 100.0;'
+
 light:
   - platform: esp32_rmt_led_strip
     id: rgb_ring
