@@ -137,11 +137,20 @@ media_player:
     internal: False
     announcement_pipeline:
       speaker: spkr
-    # Alarm sound embedded in firmware flash (16 kHz mono FLAC, matching the
-    # device's configured sample rate). Self-contained: rings even if HA is down.
+    # Candidate alarm sounds embedded in firmware flash (16 kHz mono FLAC).
+    # Self-contained: rings even if HA is down. The active one is chosen by the
+    # "Alarm Sound" select below.
     files:
-      - id: alarm_sound
-        file: alarm16.flac
+      - id: snd_gentle_chime
+        file: snd_gentle_chime.flac
+      - id: snd_marimba
+        file: snd_marimba.flac
+      - id: snd_rooster
+        file: snd_rooster.flac
+      - id: snd_game_wave
+        file: snd_game_wave.flac
+      - id: snd_classic
+        file: snd_classic.flac
     on_announcement:
       - micro_wake_word.stop:
       - delay: 500ms
@@ -244,6 +253,35 @@ number:
           id: esp32_audio_player
           volume: !lambda 'return x / 100.0;'
 
+# Alarm sound picker — dropdown on the device web page + HA. Choice persists.
+select:
+  - platform: template
+    name: "Alarm Sound"
+    id: alarm_sound_select
+    optimistic: true
+    restore_value: true
+    options:
+      - "Gentle Chime"
+      - "Marimba"
+      - "Rooster"
+      - "Game Wave"
+      - "Classic Alarm"
+    initial_option: "Gentle Chime"
+
+# Preview button — plays the currently-selected sound ONCE (for auditioning in
+# person). Does nothing while the alarm is actively ringing.
+button:
+  - platform: template
+    name: "Preview Alarm Sound"
+    id: preview_alarm_sound
+    on_press:
+      - if:
+          condition:
+            lambda: 'return !id(alarm_active);'
+          then:
+            - switch.turn_on: pa_enable
+            - script.execute: play_selected_sound
+
 light:
   - platform: esp32_rmt_led_strip
     id: rgb_ring
@@ -288,7 +326,60 @@ script:
             - lambda: id(va).set_use_wake_word(false);
             - micro_wake_word.start:
 
-  # ---- Wake-up alarm: loops the alarm sound + red LED scanner until stopped ----
+  # Play the currently-selected alarm sound ONCE (blocks until playback ends).
+  # media_file is a compile-time reference, so we branch on the select's state.
+  - id: play_selected_sound
+    then:
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Marimba";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_marimba
+                announcement: true
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Rooster";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_rooster
+                announcement: true
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Game Wave";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_game_wave
+                announcement: true
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Classic Alarm";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_classic
+                announcement: true
+      # "Gentle Chime" is the default — also covers any unexpected state.
+      - if:
+          condition:
+            lambda: |-
+              auto s = id(alarm_sound_select).state;
+              return s == "Gentle Chime" ||
+                     (s != "Marimba" && s != "Rooster" &&
+                      s != "Game Wave" && s != "Classic Alarm");
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_gentle_chime
+                announcement: true
+      - wait_until:
+          not:
+            media_player.is_announcing:
+
+  # ---- Wake-up alarm: loops the selected sound + red LED scanner until stopped ----
   - id: alarm_ring
     mode: restart              # re-trigger restarts, never stacks
     then:
@@ -308,18 +399,13 @@ script:
           green: 25%
           blue: 0%
           effect: Scanner
-      # Loop the embedded alarm sound (from flash) until the alarm is stopped.
+      # Loop the SELECTED embedded sound (from flash) until the alarm is stopped.
       - while:
           condition:
             lambda: 'return id(alarm_active);'
           then:
-            - media_player.speaker.play_on_device_media_file:
-                id: esp32_audio_player
-                media_file: alarm_sound
-                announcement: true
-            - wait_until:
-                not:
-                  media_player.is_announcing:
+            - script.execute: play_selected_sound
+            - script.wait: play_selected_sound
             - delay: 250ms
       - light.turn_off: rgb_ring
 
