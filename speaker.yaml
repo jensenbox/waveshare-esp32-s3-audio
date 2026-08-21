@@ -14,15 +14,36 @@ psram:
   mode: octal        # S3 8MB PSRAM is typically octal
   speed: 80MHz       # safe default; bump only if you know your module supports it
   # enable_ecc: false # optional; enabling reduces usable PSRAM and speed slightly
-  
+
 # Enable logging
 logger:
   level: DEBUG
+
+# Alarm ringing state (true while the wake-up alarm is sounding)
+globals:
+  - id: alarm_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # Remember the media player's volume so we can restore it after the alarm
+  # (the alarm forces full volume so it's actually loud enough to wake him).
+  - id: saved_volume
+    type: float
+    restore_value: false
+    initial_value: "0.6"
 
 # Enable Home Assistant API
 api:
   encryption:
     key: !secret api_encryption_key
+  # HA-callable actions: esphome.speaker_alarm_start / esphome.speaker_alarm_stop
+  actions:
+    - action: alarm_start
+      then:
+        - script.execute: alarm_ring
+    - action: alarm_stop
+      then:
+        - script.execute: alarm_stop
 
 ota:
   - platform: esphome
@@ -60,7 +81,7 @@ i2s_audio:
 audio_adc:
   - platform: es7210
     id: es7210_adc
-    
+
 microphone:
   - platform: i2s_audio
     id: mic
@@ -80,7 +101,7 @@ speaker:
     i2s_dout_pin: GPIO16
     dac_type: external
     audio_dac: es8311_dac
-    buffer_duration: 
+    buffer_duration:
       seconds: 20
 
 tca9555:
@@ -97,6 +118,18 @@ switch:
       mode: OUTPUT
     restore_mode: ALWAYS_ON
 
+  # "Alarm" toggle — appears on the device's own web page (http://<device-ip>/)
+  # and in Home Assistant. ON = ring the alarm, OFF = stop it. State follows
+  # the alarm (so pressing a key to stop also flips this back to OFF).
+  - platform: template
+    name: "Alarm"
+    id: alarm_switch
+    lambda: 'return id(alarm_active);'
+    turn_on_action:
+      - script.execute: alarm_ring
+    turn_off_action:
+      - script.execute: alarm_stop
+
 media_player:
   - platform: speaker
     id: esp32_audio_player
@@ -104,15 +137,37 @@ media_player:
     internal: False
     announcement_pipeline:
       speaker: spkr
+    # Candidate alarm sounds embedded in firmware flash (16 kHz mono FLAC).
+    # Self-contained: rings even if HA is down. The active one is chosen by the
+    # "Alarm Sound" select below.
+    files:
+      - id: snd_gentle_chime
+        file: snd_gentle_chime.flac
+      - id: snd_marimba
+        file: snd_marimba.flac
+      - id: snd_rooster
+        file: snd_rooster.flac
+      - id: snd_game_wave
+        file: snd_game_wave.flac
+      - id: snd_classic
+        file: snd_classic.flac
     on_announcement:
       - micro_wake_word.stop:
       - delay: 500ms
       - wait_until:
           not:
             media_player.is_announcing:
-      - delay: 500ms
-      - lambda: id(va).set_use_wake_word(false);
-      - micro_wake_word.start:
+      # Don't restart the wake-word mic between alarm beeps: the alarm keeps
+      # announcing and the mic shares the I2S bus with the speaker, so a restart
+      # here just thrashes ("Driver failed to start"). alarm_stop re-enables the
+      # mic once the alarm ends.
+      - if:
+          condition:
+            lambda: 'return !id(alarm_active);'
+          then:
+            - delay: 500ms
+            - lambda: id(va).set_use_wake_word(false);
+            - micro_wake_word.start:
 
 
 binary_sensor:
@@ -125,7 +180,14 @@ binary_sensor:
       mode: INPUT
       inverted: true
     on_press:
-      - media_player.volume_down: esp32_audio_player
+      # While the alarm is ringing, any key silences it; otherwise normal role.
+      - if:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: alarm_stop
+          else:
+            - media_player.volume_down: esp32_audio_player
 
   - platform: gpio
     name: "Key2 - Assist"
@@ -136,9 +198,14 @@ binary_sensor:
       mode: INPUT
       inverted: true
     on_press:
-      - logger.log: "Starting Assistant"
-      - voice_assistant.start:
-        
+      - if:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: alarm_stop
+          else:
+            - logger.log: "Starting Assistant"
+            - voice_assistant.start:
 
   - platform: gpio
     name: "Key3 - Vol Up"
@@ -149,7 +216,71 @@ binary_sensor:
       mode: INPUT
       inverted: true
     on_press:
-      - media_player.volume_up: esp32_audio_player
+      - if:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: alarm_stop
+          else:
+            - media_player.volume_up: esp32_audio_player
+
+  # OPTIONAL dedicated STOP button on the expansion header (TCA9555 EXIO12).
+  # Uncomment after wiring a momentary button between EXIO12 and GND.
+  # - platform: gpio
+  #   name: "Alarm Stop Button"
+  #   id: stop_btn
+  #   pin:
+  #     tca9555: exio
+  #     number: 12
+  #     mode: INPUT
+  #     inverted: true
+  #   on_press:
+  #     - script.execute: alarm_stop
+
+# Volume slider — appears on the device web page (http://<device-ip>/) and in
+# Home Assistant. Reflects and sets the media player's volume (0-100%).
+number:
+  - platform: template
+    name: "Volume"
+    id: volume_slider
+    min_value: 0
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    lambda: 'return id(esp32_audio_player)->volume * 100.0;'
+    set_action:
+      - media_player.volume_set:
+          id: esp32_audio_player
+          volume: !lambda 'return x / 100.0;'
+
+# Alarm sound picker — dropdown on the device web page + HA. Choice persists.
+select:
+  - platform: template
+    name: "Alarm Sound"
+    id: alarm_sound_select
+    optimistic: true
+    restore_value: true
+    options:
+      - "Gentle Chime"
+      - "Marimba"
+      - "Rooster"
+      - "Game Wave"
+      - "Classic Alarm"
+    initial_option: "Gentle Chime"
+
+# Preview button — plays the currently-selected sound ONCE (for auditioning in
+# person). Does nothing while the alarm is actively ringing.
+button:
+  - platform: template
+    name: "Preview Alarm Sound"
+    id: preview_alarm_sound
+    on_press:
+      - if:
+          condition:
+            lambda: 'return !id(alarm_active);'
+          then:
+            - switch.turn_on: pa_enable
+            - script.execute: play_selected_sound
 
 light:
   - platform: esp32_rmt_led_strip
@@ -175,7 +306,10 @@ light:
           twinkle_probability: 5%
           progress_interval: 60ms
 
-# ---------- Wake word fallback restart ----------
+# ---------- LED choreography + alarm + wake-word fallback scripts ----------
+script:
+  # Wake word fallback restart (MOVED here from under light: — it is a script,
+  # not a light. This misplacement previously broke the whole config compile.)
   - id: restart_mww_fallback
     mode: restart
     then:
@@ -192,8 +326,102 @@ light:
             - lambda: id(va).set_use_wake_word(false);
             - micro_wake_word.start:
 
-# ---------- LED choreography scripts ----------
-script:
+  # Play the currently-selected alarm sound ONCE (blocks until playback ends).
+  # media_file is a compile-time reference, so we branch on the select's state.
+  - id: play_selected_sound
+    then:
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Marimba";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_marimba
+                announcement: true
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Rooster";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_rooster
+                announcement: true
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Game Wave";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_game_wave
+                announcement: true
+      - if:
+          condition:
+            lambda: 'return id(alarm_sound_select).state == "Classic Alarm";'
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_classic
+                announcement: true
+      # "Gentle Chime" is the default — also covers any unexpected state.
+      - if:
+          condition:
+            lambda: |-
+              auto s = id(alarm_sound_select).state;
+              return s == "Gentle Chime" ||
+                     (s != "Marimba" && s != "Rooster" &&
+                      s != "Game Wave" && s != "Classic Alarm");
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                id: esp32_audio_player
+                media_file: snd_gentle_chime
+                announcement: true
+      - wait_until:
+          not:
+            media_player.is_announcing:
+
+  # ---- Wake-up alarm: loops the selected sound + red LED scanner until stopped ----
+  - id: alarm_ring
+    mode: restart              # re-trigger restarts, never stacks
+    then:
+      - lambda: id(alarm_active) = true;
+      - micro_wake_word.stop:
+      - switch.turn_on: pa_enable
+      # Save current volume, then force full volume so the alarm is loud.
+      - lambda: 'id(saved_volume) = id(esp32_audio_player)->volume;'
+      - media_player.volume_set:
+          id: esp32_audio_player
+          volume: 1.0
+      # Red LED scanner runs continuously while the alarm is active.
+      - light.turn_on:
+          id: rgb_ring
+          brightness: 90%
+          red: 100%
+          green: 25%
+          blue: 0%
+          effect: Scanner
+      # Loop the SELECTED embedded sound (from flash) until the alarm is stopped.
+      - while:
+          condition:
+            lambda: 'return id(alarm_active);'
+          then:
+            - script.execute: play_selected_sound
+            - script.wait: play_selected_sound
+            - delay: 250ms
+      - light.turn_off: rgb_ring
+
+  - id: alarm_stop
+    then:
+      - lambda: id(alarm_active) = false;
+      - media_player.stop:
+      # Restore the volume the alarm overrode.
+      - media_player.volume_set:
+          id: esp32_audio_player
+          volume: !lambda 'return id(saved_volume);'
+      - light.turn_off: rgb_ring
+      - delay: 500ms
+      - lambda: id(va).set_use_wake_word(false);
+      - micro_wake_word.start:
+
   # Default idle: LEDs off
   - id: leds_idle
     then:
